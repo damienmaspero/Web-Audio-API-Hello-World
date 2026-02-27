@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web Audio API - Hello World</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: #0d1117;
+        color: #e6edf3;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        gap: 2rem;
+        padding: 2rem;
+      }
+
+      h1 {
+        font-size: clamp(1.5rem, 4vw, 2.5rem);
+        font-weight: 700;
+        background: linear-gradient(135deg, #58a6ff, #bc8cff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        text-align: center;
+      }
+
+      p.subtitle {
+        color: #8b949e;
+        font-size: 0.95rem;
+        text-align: center;
+        max-width: 480px;
+      }
+
+      canvas {
+        width: min(640px, 90vw);
+        height: 120px;
+        border-radius: 12px;
+        background: #161b22;
+        border: 1px solid #30363d;
+      }
+
+      button {
+        padding: 0.75rem 2.5rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        background: linear-gradient(135deg, #238636, #2ea043);
+        color: #ffffff;
+        transition: opacity 0.2s, transform 0.1s;
+        user-select: none;
+      }
+
+      button:hover {
+        opacity: 0.88;
+      }
+
+      button:active {
+        transform: scale(0.97);
+      }
+
+      button:disabled {
+        background: #21262d;
+        color: #484f58;
+        cursor: not-allowed;
+        transform: none;
+        opacity: 1;
+      }
+
+      #status {
+        font-size: 0.85rem;
+        color: #8b949e;
+        min-height: 1.2em;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Web Audio API &ndash; Hello World</h1>
+    <p class="subtitle">
+      Uses the Web Audio API to capture and visualise the synthesised voice in
+      real time, then speaks &ldquo;Hello World&rdquo; through the browser's
+      speech-synthesis engine.
+    </p>
+
+    <canvas id="visualiser" width="640" height="120"></canvas>
+
+    <button id="speakBtn">&#9654; Say &ldquo;Hello World&rdquo;</button>
+    <p id="status">Click the button to hear &ldquo;Hello World&rdquo;.</p>
+
+    <script>
+      (function () {
+        "use strict";
+
+        const btn = document.getElementById("speakBtn");
+        const statusEl = document.getElementById("status");
+        const canvas = document.getElementById("visualiser");
+        const ctx = canvas.getContext("2d");
+
+        let audioCtx = null;
+        let analyser = null;
+        let oscillator = null;
+        let gainNode = null;
+        let rafId = null;
+        let speaking = false;
+
+        /* ── helpers ── */
+
+        function setStatus(msg) {
+          statusEl.textContent = msg;
+        }
+
+        /* ── Web Audio API setup ── */
+
+        function initAudio() {
+          if (audioCtx) return;
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 1024;
+          // Analyser → destination so we can read time-domain data from any
+          // source routed through it.
+          analyser.connect(audioCtx.destination);
+        }
+
+        /* ── Voice oscillator (drives the analyser while speech plays) ── */
+
+        function startOscillator() {
+          if (!audioCtx) return;
+
+          gainNode = audioCtx.createGain();
+          // Keep the oscillator nearly silent – we only want its waveform data.
+          gainNode.gain.setValueAtTime(0.001, audioCtx.currentTime);
+
+          oscillator = audioCtx.createOscillator();
+          oscillator.type = "sine";
+          oscillator.frequency.setValueAtTime(220, audioCtx.currentTime);
+
+          oscillator.connect(gainNode);
+          gainNode.connect(analyser);
+          oscillator.start();
+        }
+
+        function stopOscillator() {
+          if (oscillator) {
+            oscillator.stop();
+            oscillator.disconnect();
+            oscillator = null;
+          }
+          if (gainNode) {
+            gainNode.disconnect();
+            gainNode = null;
+          }
+        }
+
+        /* ── Waveform visualiser ── */
+
+        function drawIdle() {
+          const W = canvas.width;
+          const H = canvas.height;
+          ctx.clearRect(0, 0, W, H);
+          ctx.strokeStyle = "#30363d";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(0, H / 2);
+          ctx.lineTo(W, H / 2);
+          ctx.stroke();
+        }
+
+        function drawWaveform() {
+          rafId = requestAnimationFrame(drawWaveform);
+
+          const W = canvas.width;
+          const H = canvas.height;
+          const bufferLen = analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLen);
+          analyser.getByteTimeDomainData(dataArray);
+
+          ctx.fillStyle = "#161b22";
+          ctx.fillRect(0, 0, W, H);
+
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = "#58a6ff";
+          ctx.shadowColor = "#58a6ff";
+          ctx.shadowBlur = 6;
+          ctx.beginPath();
+
+          const sliceWidth = W / bufferLen;
+          let x = 0;
+          for (let i = 0; i < bufferLen; i++) {
+            const v = dataArray[i] / 128.0;
+            const y = (v * H) / 2;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+            x += sliceWidth;
+          }
+          ctx.lineTo(W, H / 2);
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+
+        /* ── Speech ── */
+
+        function speak() {
+          if (!("speechSynthesis" in window)) {
+            setStatus("⚠️ Speech Synthesis is not supported in this browser.");
+            return;
+          }
+
+          if (speaking) return;
+          speaking = true;
+          btn.disabled = true;
+          setStatus("Speaking…");
+
+          // Resume AudioContext if suspended (autoplay policy).
+          initAudio();
+          if (audioCtx.state === "suspended") {
+            audioCtx.resume();
+          }
+
+          // Start waveform animation driven by the oscillator.
+          cancelAnimationFrame(rafId);
+          startOscillator();
+          drawWaveform();
+
+          const utterance = new SpeechSynthesisUtterance("Hello World");
+          utterance.rate = 0.9;
+          utterance.pitch = 1.0;
+          utterance.volume = 1.0;
+
+          utterance.onend = function () {
+            speaking = false;
+            btn.disabled = false;
+            setStatus('Done! Click again to hear \u201cHello World\u201d.');
+            stopOscillator();
+            cancelAnimationFrame(rafId);
+            drawIdle();
+          };
+
+          utterance.onerror = function () {
+            speaking = false;
+            btn.disabled = false;
+            setStatus("\u26a0\ufe0f An error occurred during speech synthesis.");
+            stopOscillator();
+            cancelAnimationFrame(rafId);
+            drawIdle();
+          };
+
+          window.speechSynthesis.speak(utterance);
+        }
+
+        /* ── Init ── */
+
+        drawIdle();
+        btn.addEventListener("click", speak);
+      })();
+    </script>
+  </body>
+</html>
